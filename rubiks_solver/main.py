@@ -45,11 +45,11 @@
 
 from tkinter import ttk
 from queue import Queue
-from PIL import Image
+from PIL import ImageTk, Image
 
 import tkinter as tk
 import threading as td
-# import picamera
+import picamera
 import io
 
 # generic page that can be brought onto the front plane
@@ -117,41 +117,52 @@ class Solver(Page):
 class Camera(Page):
     def __init__(self, *args, **kwargs):
         super(Camera, self).__init__(*args, **kwargs)
-        # label = tk.Label(self, text="This is page camera", bg='blue', justify=tk.CENTER)
-        # label.pack(side="top", fill="both", expand=True)
 
+        # left big frame
         self.entries_frame = tk.LabelFrame(self, text='Interest Zones')
         self.entries_frame.pack(side='left', fill=tk.Y, ipadx=2, ipady=2, padx=20, pady=20)
 
+        # configure layout of labels and buttons in the left frame
         self.entries_frame.rowconfigure(0, weight=1)
         self.entries_frame.rowconfigure(1, weight=1)
         self.entries_frame.rowconfigure(2, weight=1)
         self.entries_frame.rowconfigure(3, weight=1)
+        self.entries_frame.rowconfigure(4, weight=1)
         self.entries_frame.columnconfigure(0, weight=1)
         self.entries_frame.columnconfigure(1, weight=1)
 
+        # and setup the labels and the buttons in the left frame
         self.labels = {}
         self.entries = {}
         self.entry_values = {}
-        self.label_names = ['X Offset (px)', 'Y Offset (px)', 'Distance (px)']
+        self.label_names = ['X Offset (px)', 'Y Offset (px)', 'Size (px)', 'Pad (px)']
         max_button_width = max(map(lambda x: len(x), self.label_names))
         for idx, text in enumerate(self.label_names):
             self.labels[text] = tk.Label(self.entries_frame, text=text, height=1, width=max_button_width, justify='right', anchor=tk.W)
-            self.labels[text].grid(row=idx, column=0, padx=20, pady=20)
+            self.labels[text].grid(row=idx, column=0, padx=20, pady=10)
 
             self.entry_values[text] = tk.IntVar()
             self.entries[text] = tk.Entry(self.entries_frame, justify='left', width=5, textvariable=self.entry_values[text])
-            self.entries[text].grid(row=idx, column=1, padx=20, pady=20)
+            self.entries[text].grid(row=idx, column=1, padx=20, pady=10)
 
+        # create the capture button
         self.capture_button = tk.Button(self.entries_frame, text='Get Preview', command=self.button_pressed)
-        self.capture_button.grid(row=3, column=0, columnspan=2)
+        self.capture_button.grid(row=4, column=0, columnspan=2)
 
-        self.images = tk.Frame(self)
+        # right big frame (actually label) that includes the preview image from the camera
+        self.images = tk.Label(self, text='No captured image', bd=2, relief=tk.RIDGE)
         self.images.pack(side='left', fill=tk.BOTH, ipadx=2, ipady=2, padx=20, pady=20, expand=True)
 
+    
+    # every time the get preview button is pressed
     def button_pressed(self):
         for entry in self.label_names:
-            print(self.entry_values[entry].get())
+            self.entry_values[entry].get()
+
+        img = ImageTk.PhotoImage(camera.capture())
+        self.images.configure(image=img)
+        self.images.image = img
+
 
 class Arms(Page):
     def __init__(self, *args, **kwargs):
@@ -200,29 +211,33 @@ class MainView(tk.Tk):
         # and show the default page
         self.frames['Solver'].show()
 
-# class PiCameraPhotos():
-#     def __init__(self, res=(640, 480)):
-#         self.camera = picamera.PiCamera()
-#         self.resolution = res
-#         self.framerate = 30
-#         self.sensor_mode = 1
-#         self.rotation = 0
-#         self.shutter_speed = 1000.0 / self.framerate
-#         self.brightness = 50
-#         self.awb_mode = "off"
-#         self.awb_gains = 1.5
+class PiCameraPhotos():
+    def __init__(self):
+        # initialize camera with a set of predefined values
+        self.camera = picamera.PiCamera()
+        self.resolution = (1920, 1080)
+        self.framerate = 30
+        self.sensor_mode = 1
+        self.rotation = 0
+        self.shutter_speed = 1000.0 / self.framerate
+        self.brightness = 50
+        self.awb_mode = "off"
+        self.awb_gains = 1.5
+        
+        # also initialize the container for the image
+        self.stream = io.BytesIO() 
 
-#     def capture(self):
-#         stream = io.BytesIO()
-#         self.camera.capture(stream, format='jpeg')
-#         stream.seek(0)
-#         image = Image.open(stream)
-
-#         return image
+    def capture(self):
+        self.stream.seek(0)
+        self.camera.capture(self.stream, use_video_port=True, resize=(640, 480), format='jpeg')
+        self.stream.seek(0)
+        return Image.open(self.stream)
 
 if __name__ == "__main__":
+    camera = PiCameraPhotos()
+
     app = MainView(size="800x400", name="Rubik's Solver", queues=2)
     app.mainloop()
 
     # camera = PiCameraPhotos()
-    # camera.capture().show()
+    # image = camera.capture()
