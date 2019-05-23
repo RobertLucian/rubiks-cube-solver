@@ -167,8 +167,69 @@ class Camera(Page):
 class Arms(Page):
     def __init__(self, *args, **kwargs):
         super(Arms, self).__init__(*args, **kwargs)
-        label = tk.Label(self, text="This is page arms", bg='green', justify=tk.CENTER)
-        label.pack(side="top", fill="both", expand=True)
+        # label = tk.Label(self, text="This is page arms", bg='green', justify=tk.CENTER)
+        # label.pack(side="top", fill="both", expand=True)
+
+        self.arms = ['Arm 1', 'Arm 2', 'Arm 3', 'Arm 4']
+        self.arm_labels = {}
+
+        # just labels for the servos
+        self.low_servo_labels = []
+        self.high_servo_labels = []
+
+        # integer entries for the servo limits
+        self.low_servo_entries = []
+        self.high_servo_entries = []
+        self.low_servo_vals = []
+        self.high_servo_vals = []
+
+        # and the actual sliders for testing
+        self.servo_sliders = []
+
+        for idx, arm in enumerate(self.arms):
+            self.arm_labels[arm] = tk.LabelFrame(self, text=arm)
+            self.arm_labels[arm].pack(side='top', fill=tk.BOTH, expand=True, ipadx=10, ipady=2, padx=15, pady=5)
+            
+            for i in range(2):
+                servo_idx = 2 * idx + i
+                if servo_idx % 2 == 0:
+                    t1 = 'Pos'
+                else:
+                    t1 = 'Rot'
+                # low positioned labels
+                self.low_servo_labels.append(tk.Label(self.arm_labels[arm], text='S{} '.format(servo_idx) + 'Low ' + t1))
+                self.low_servo_labels[-1].pack(side='left', fill=tk.BOTH, padx=2)
+                # low positioned entries
+                self.low_servo_vals.append(tk.IntVar)
+                self.low_servo_entries.append(tk.Entry(self.arm_labels[arm], justify='left', width=3, textvariable=self.low_servo_vals[-1]))
+                self.low_servo_entries[-1].pack(side='left', fill=tk.X, padx=2)
+
+                # high positioned labels
+                self.high_servo_labels.append(tk.Label(self.arm_labels[arm], text='S{} '.format(servo_idx) + 'High ' + t1))
+                self.high_servo_labels[-1].pack(side='left', fill=tk.BOTH, padx=2)
+                # high positioned entries
+                self.high_servo_vals.append(tk.IntVar)
+                self.high_servo_entries.append(tk.Entry(self.arm_labels[arm], justify='left', width=3, textvariable=self.high_servo_vals[-1]))
+                self.high_servo_entries[-1].pack(side='left', fill=tk.X, padx=2)
+
+                # slider
+                self.servo_sliders.append(tk.Scale(self.arm_labels[arm], from_=0, to=100, orient=tk.HORIZONTAL, showvalue=0, command=lambda val, s=servo_idx: self.scale(s, val)))
+                self.servo_sliders[-1].pack(side='left', fill=tk.X, expand=True, padx=3)
+
+        self.button_frame = tk.LabelFrame(self, text='Actions')
+        self.button_frame.pack(side='top', fill=tk.BOTH, expand=True, ipadx=10, ipady=2, padx=15, pady=5)
+        self.button_names = ['Load Config', 'Save Config', 'Cut Power']
+        max_width = max(map(lambda x: len(x), self.button_names))
+        self.buttons = {}
+        for btn_name in self.button_names:
+            self.buttons[btn_name] = tk.Button(self.button_frame, text=btn_name, width=max_width, command=lambda label=btn_name: self.button_action(label))
+            self.buttons[btn_name].pack(side='left', expand=True)
+
+    def scale(self, servo, value):
+        print(servo, value)
+
+    def button_action(self, label):
+        print(label)
 
 class MainView(tk.Tk):
     def __init__(self, size, name, queues):
@@ -229,7 +290,7 @@ class PiCameraPhotos():
 
     def capture(self):
         self.stream.seek(0)
-        self.camera.capture(self.stream, use_video_port=True, resize=(640, 480), format='jpeg')
+        self.camera.capture(self.stream, use_video_port=True, resize=(480, 360), format='jpeg')
         self.stream.seek(0)
         return Image.open(self.stream)
 
