@@ -51,6 +51,9 @@ import tkinter as tk
 import threading as td
 import picamera
 import io
+import json
+
+config_file = 'config.json'
 
 # generic page that can be brought onto the front plane
 class Page(tk.Frame):
@@ -197,18 +200,18 @@ class Arms(Page):
                 else:
                     t1 = 'Rot'
                 # low positioned labels
-                self.low_servo_labels.append(tk.Label(self.arm_labels[arm], text='S{} '.format(servo_idx) + 'Low ' + t1))
+                self.low_servo_labels.append(tk.Label(self.arm_labels[arm], text='S{} '.format(servo_idx + 1) + 'Low ' + t1))
                 self.low_servo_labels[-1].pack(side='left', fill=tk.BOTH, padx=2)
                 # low positioned entries
-                self.low_servo_vals.append(tk.IntVar)
+                self.low_servo_vals.append(tk.IntVar())
                 self.low_servo_entries.append(tk.Entry(self.arm_labels[arm], justify='left', width=3, textvariable=self.low_servo_vals[-1]))
                 self.low_servo_entries[-1].pack(side='left', fill=tk.X, padx=2)
 
                 # high positioned labels
-                self.high_servo_labels.append(tk.Label(self.arm_labels[arm], text='S{} '.format(servo_idx) + 'High ' + t1))
+                self.high_servo_labels.append(tk.Label(self.arm_labels[arm], text='S{} '.format(servo_idx + 1) + 'High ' + t1))
                 self.high_servo_labels[-1].pack(side='left', fill=tk.BOTH, padx=2)
                 # high positioned entries
-                self.high_servo_vals.append(tk.IntVar)
+                self.high_servo_vals.append(tk.IntVar())
                 self.high_servo_entries.append(tk.Entry(self.arm_labels[arm], justify='left', width=3, textvariable=self.high_servo_vals[-1]))
                 self.high_servo_entries[-1].pack(side='left', fill=tk.X, padx=2)
 
@@ -224,12 +227,51 @@ class Arms(Page):
         for btn_name in self.button_names:
             self.buttons[btn_name] = tk.Button(self.button_frame, text=btn_name, width=max_width, command=lambda label=btn_name: self.button_action(label))
             self.buttons[btn_name].pack(side='left', expand=True)
+        
+        # load config values on app launch
+        self.button_action(self.button_names[0])
 
     def scale(self, servo, value):
         print(servo, value)
 
     def button_action(self, label):
         print(label)
+        
+        # load/save config file
+        if label in self.button_names[:2]:
+            # load config file
+            try:
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+
+                # load config file into this class
+                if label == self.button_names[0]:
+                    for idx, _ in enumerate(self.arms * 2):
+                        arm = config['servos']['s{}'.format(idx + 1)]
+                        self.low_servo_vals[idx].set(arm['low'])
+                        self.high_servo_vals[idx].set(arm['high'])
+            except:
+                print('config file can\'t be loaded because it doesn\'t exist')
+                config = {}
+
+            # save config file
+            if label == self.button_names[1]:
+                config['servos'] = {}
+                for idx, _ in enumerate(self.arms * 2):
+                    arm = {
+                        'low': self.low_servo_vals[idx].get(),
+                        'high': self.high_servo_vals[idx].get()
+                    }
+                    config['servos']['s{}'.format(idx + 1)] = arm
+                try:
+                    with open(config_file, 'w') as f:
+                        json.dump(config, f)
+                except:
+                    print('failed saving the config file')
+
+        elif label == self.button_names[2]:
+            pass
+            
 
 class MainView(tk.Tk):
     def __init__(self, size, name, queues):
