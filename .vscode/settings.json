@@ -1,0 +1,26 @@
+{
+    "deploy.reloaded": {
+        "targets": [
+            {
+                "type": "sftp",
+                "name": "Rubik's Solver SFTP",
+                "description": "FTP folder for Rubik's Solver",
+
+                "dir": "/home/pi/test",
+                "host": "dex.local",
+                "user": "pi",
+                "password": "robots1234",
+            }
+        ],
+        "packages": [
+            {
+                "name": "Rubik's Solver",
+                "files": [
+                    "rubiks_solver/*"
+                ],
+                "syncWhenOpen": "Rubik's Solver SFTP",
+                "removeOnChange": ["Rubik's Solver SFTP"]
+            }
+        ]
+    }
+}
