@@ -45,7 +45,7 @@
 
 from tkinter import ttk
 from queue import Queue
-from PIL import ImageTk, Image
+from PIL import ImageTk, Image, ImageDraw
 
 import tkinter as tk
 import threading as td
@@ -149,22 +149,75 @@ class Camera(Page):
             self.entries[text].grid(row=idx, column=1, padx=20, pady=10)
 
         # create the capture button
-        self.capture_button = tk.Button(self.entries_frame, text='Get Preview', command=self.button_pressed)
-        self.capture_button.grid(row=4, column=0, columnspan=2)
+        self.button_frame = tk.Frame(self.entries_frame)
+        self.button_frame.grid(row=4, column=0, columnspan=2)
+        self.button_names = ['Load', 'Save', 'Preview']
+        max_width = max(map(lambda x: len(x), self.button_names))
+        self.buttons = {}
+        for btn_name in self.button_names:
+            self.buttons[btn_name] = tk.Button(self.button_frame, text=btn_name, width=max_width, command=lambda label=btn_name: self.button_action(label))
+            self.buttons[btn_name].pack(side='left', expand=True, padx=2, pady=2)
+        # self.capture_button = tk.Button(self.entries_frame, text='Get Preview', command=self.button_pressed)
+        # self.capture_button.grid(row=4, column=0, columnspan=2)
 
         # right big frame (actually label) that includes the preview image from the camera
         self.images = tk.Label(self, text='No captured image', bd=2, relief=tk.RIDGE)
         self.images.pack(side='left', fill=tk.BOTH, ipadx=2, ipady=2, padx=20, pady=20, expand=True)
 
+        # load the config file on app launch
+        self.button_action(self.button_names[0])
+
     
     # every time the get preview button is pressed
-    def button_pressed(self):
-        for entry in self.label_names:
-            self.entry_values[entry].get()
+    def button_action(self, label):
+        print(label)
 
-        img = ImageTk.PhotoImage(camera.capture())
-        self.images.configure(image=img)
-        self.images.image = img
+        if label in self.button_names[:2]:
+            # load config file
+            try:
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+
+                # load config file into this class
+                if label == self.button_names[0]:
+                    for key in self.label_names:
+                        val = config['camera'][key]
+                        self.entry_values[key].set(val)
+            except:
+                print('config file can\'t be loaded because it doesn\'t exist')
+                config = {}
+
+            # save config file
+            if label == self.button_names[1]:
+                config['camera'] = {}
+                for key in self.label_names:
+                    config['camera'][key] = self.entry_values[key].get()
+                try:
+                    with open(config_file, 'w') as f:
+                        json.dump(config, f)
+                except:
+                    print('failed saving the config file')
+
+        # if we have to get a preview
+        if label == self.button_names[2]:
+            # img = ImageTk.PhotoImage(camera.capture())
+            img = camera.capture()
+            
+            xoff = self.entry_values['X Offset (px)'].get()
+            yoff = self.entry_values['Y Offset (px)'].get()
+            dim = self.entry_values['Size (px)'].get()
+            pad = self.entry_values['Pad (px)'].get()
+            draw = ImageDraw.Draw(img)
+            for row in range(3):
+                for col in range(3):
+                    A = [xoff + row * dim + pad, yoff + col * dim + pad]
+                    B = [xoff + (row + 1) * dim, yoff + (col + 1) * dim]
+                    draw.rectangle(A + B, width=2)
+
+            out = ImageTk.PhotoImage(img)
+
+            self.images.configure(image=out)
+            self.images.image = out
 
 
 class Arms(Page):
