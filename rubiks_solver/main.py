@@ -53,7 +53,29 @@ import picamera
 import io
 import json
 
-config_file = 'config.json'
+class QueuePubSub():
+    """
+    Class that implements the notion of subscribers/publishers by using standard queues
+    """
+    def __init__(self, queues):
+        self.queues = queues
+
+    def publish(self, channel, message):
+        """
+        channel - An immutable key that represents the name of the channel. It can be nonexistent.
+        message - The message that will be pushed to the queue that's associated to the given channel.
+        """
+        if channel not in self.queues:
+            self.queues[channel] = Queue()
+        self.queues[channel].put(message)
+    
+    def subscribe(self, channel):
+        """
+        channel - An immutable key that represents the name of the channel. It can be nonexistent.
+        """
+        if channel not in self.queues:
+            self.queues[channel] = Queue()
+        return self.queues[channel]
 
 # generic page that can be brought onto the front plane
 class Page(tk.Frame):
@@ -327,14 +349,13 @@ class Arms(Page):
             
 
 class MainView(tk.Tk):
-    def __init__(self, size, name, queues):
+    def __init__(self, size, name):
 
         # initialize root window and shit
         super(MainView, self).__init__()
         self.geometry(size)
         self.title(name)
         self.resizable(False, False)
-        self.queues = queues
         # initialize master-root window
         window = tk.Frame(self, bd=2)
         window.pack(side='top', fill=tk.BOTH, expand=True)
@@ -390,9 +411,11 @@ class PiCameraPhotos():
         return Image.open(self.stream)
 
 if __name__ == "__main__":
+    queues = {}
+    config_file = 'config.json'
     camera = PiCameraPhotos()
 
-    app = MainView(size="800x400", name="Rubik's Solver", queues=2)
+    app = MainView(size="800x400", name="Rubik's Solver")
     app.mainloop()
 
     # camera = PiCameraPhotos()
