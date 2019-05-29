@@ -45,6 +45,8 @@
 
 from tkinter import ttk
 from queue import Queue
+from queue import Empty
+from time import sleep
 from PIL import ImageTk, Image, ImageDraw
 
 import tkinter as tk
@@ -52,6 +54,9 @@ import threading as td
 import picamera
 import io
 import json
+import transitions
+import logging
+import sys
 
 class QueuePubSub():
     """
@@ -89,6 +94,10 @@ class Page(tk.Frame):
 class Solver(Page):
     def __init__(self, *args, **kwargs):
         super(Solver, self).__init__(*args, **kwargs)
+        
+        self.channel = 'solver'
+        self.pub = QueuePubSub(queues)
+        self.sub = QueuePubSub(queues).subscribe('updates')
 
         # Grip/Stop Functions
         self.grip_labelframe = tk.LabelFrame(self, text='Grip/Stop Functions')
@@ -137,11 +146,14 @@ class Solver(Page):
         self.buttons['Solve Cube'].config(state='disabled')
 
     def button_action(self, label):
-        print(label)
+        self.pub.publish(self.channel, label)
 
 class Camera(Page):
     def __init__(self, *args, **kwargs):
         super(Camera, self).__init__(*args, **kwargs)
+        
+        self.channel = 'config'
+        self.pub = QueuePubSub(queues)
 
         # left big frame
         self.entries_frame = tk.LabelFrame(self, text='Interest Zones')
@@ -192,8 +204,6 @@ class Camera(Page):
     
     # every time the get preview button is pressed
     def button_action(self, label):
-        print(label)
-
         if label in self.button_names[:2]:
             # load config file
             try:
@@ -219,6 +229,8 @@ class Camera(Page):
                         json.dump(config, f)
                 except:
                     print('failed saving the config file')
+
+            self.pub.publish(self.channel, config)
 
         # if we have to get a preview
         if label == self.button_names[2]:
@@ -247,6 +259,11 @@ class Arms(Page):
         super(Arms, self).__init__(*args, **kwargs)
         # label = tk.Label(self, text="This is page arms", bg='green', justify=tk.CENTER)
         # label.pack(side="top", fill="both", expand=True)
+
+        self.channel_cfg = 'config'
+        self.channel_play = 'arms_play'
+        self.channel_solver = 'solver'
+        self.pub = QueuePubSub(queues)
 
         self.arms = ['Arm 1', 'Arm 2', 'Arm 3', 'Arm 4']
         self.arm_labels = {}
@@ -307,11 +324,9 @@ class Arms(Page):
         self.button_action(self.button_names[0])
 
     def scale(self, servo, value):
-        print(servo, value)
+        self.pub.publish(self.channel_play, [servo, value])
 
     def button_action(self, label):
-        print(label)
-        
         # load/save config file
         if label in self.button_names[:2]:
             # load config file
@@ -344,8 +359,10 @@ class Arms(Page):
                 except:
                     print('failed saving the config file')
 
+            self.pub.publish(self.channel_cfg, config)
+
         elif label == self.button_names[2]:
-            pass
+            self.pub.publish(self.channel_solver, label)
             
 
 class MainView(tk.Tk):
@@ -408,15 +425,56 @@ class PiCameraPhotos():
         self.stream.seek(0)
         self.camera.capture(self.stream, use_video_port=True, resize=(480, 360), format='jpeg')
         self.stream.seek(0)
+        logger.info('image captured')
         return Image.open(self.stream)
 
 if __name__ == "__main__":
+    hldr = logging.StreamHandler(sys.stdout)
+    fmt = logging.Formatter('%(asctime)s %(levelname)2s %(name)s | %(message)s')
+    hldr.setLevel(logging.DEBUG)
+    hldr.setFormatter(fmt)
+
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(hldr)
+
     queues = {}
     config_file = 'config.json'
     camera = PiCameraPhotos()
+    stop_event = td.Event()
 
-    app = MainView(size="800x400", name="Rubik's Solver")
-    app.mainloop()
+    def fsm_runner():
+        subs_channels = ['solver', 'config', 'arms_play']
+        pubs_channels = ['update']
+        subs = [QueuePubSub(queues).subscribe(channel) for channel in subs_channels]
+
+        while not stop_event.is_set():
+            for sub, channel in zip(subs, subs_channels):
+                try:
+                    message = sub.get(block=False)
+                    # logger.debug(channel)
+                    if channel == 'config':
+                        logger.info('save/load button pressed (update solver configs)')
+                    elif channel == 'solver':
+                        logger.info("\"" + message.lower() + '\" button pressed')
+                    elif channel == 'arms_play':
+                        servo, pos = message
+                        logger.debug('servo {} rotated to position {}'.format(servo, pos))
+
+                except Empty:
+                    continue
+            sleep(0.001)
+    
+    fsm_thread = td.Thread(target=fsm_runner, name='FSM Runner')
+    fsm_thread.start()
+
+    try:
+        app = MainView(size="800x400", name="Rubik's Solver")
+        app.mainloop()
+    except Exception as e:
+        logger.exception(e)
+    finally:
+        stop_event.set()
 
     # camera = PiCameraPhotos()
     # image = camera.capture()
