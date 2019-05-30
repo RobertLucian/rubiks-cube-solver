@@ -97,7 +97,7 @@ class Solver(Page):
         
         self.channel = 'solver'
         self.pub = QueuePubSub(queues)
-        self.sub = QueuePubSub(queues).subscribe('updates')
+        self.sub = QueuePubSub(queues).subscribe('update')
 
         # Grip/Stop Functions
         self.grip_labelframe = tk.LabelFrame(self, text='Grip/Stop Functions')
@@ -145,8 +145,24 @@ class Solver(Page):
         self.button_names += new_buttons
         self.buttons['Solve Cube'].config(state='disabled')
 
+        self.after(50, self.refresh_page)
+
     def button_action(self, label):
         self.pub.publish(self.channel, label)
+
+    def refresh_page(self):
+        try:
+            update = self.sub.get(block=False)
+            if update['solve_button_locked'] is True:
+                state = 'disabled'
+            else:
+                state = 'normal'
+            self.buttons['Solve Cube'].config(state=state)
+            logger.info('{} \"Solve Cube\" button'.format(state))
+        except Empty:
+            pass
+        finally:
+            self.after(50, self.refresh_page)
 
 class Camera(Page):
     def __init__(self, *args, **kwargs):
@@ -431,15 +447,15 @@ class PiCameraPhotos():
 import random
 
 class RubiksSolver():
-    def __init__(self, pub):
+    def __init__(self, channel):
         '''
-        pub is a limitless queue to which "unblock_solve_button"
+        channel is the channel to which commands have to be posted
         or "block_solve_button" has to be pushed as message
         '''
-        self.pub = pub
+        self.pub = QueuePubSub(queues)
+        self.channel = channel
         self.thread_stopper = td.Event()
         self.thread = None
-        self.config = None
         self.cubestate = None
 
     def unblock_solve(self, event):
@@ -448,7 +464,9 @@ class RubiksSolver():
         event parameter is not necessary here
         '''
         logger.debug('unblock solve button')
-        # self.pub.put('unblock_solve_button')
+        self.pub.publish(self.channel, {
+            'solve_button_locked': False
+        })
 
     def is_finished(self, event):
         '''
@@ -468,8 +486,17 @@ class RubiksSolver():
         if self.thread != None and not self.thread_stopper.is_set():
             self.thread_stopper.set()
             self.thread.join()
+        hard = event.kwargs.get('hard')
+        if hard is True:
+            # cut the power from the servos
+            logger.debug('hard stop servos')
+        else:
+            # just stop the motors but don't cut the power
+            logger.debug('soft stop servos')
         # stop the arms here
-        # self.pub.put('block_solve_button')
+        self.pub.publish(self.channel, {
+            'solve_button_locked': True
+        })
 
     def readcube(self, event):
         '''
@@ -477,14 +504,15 @@ class RubiksSolver():
         event parameter is necessary for getting the arm configs
         '''
         logger.debug('start thread for reading the cube')
+        self.config = event.kwargs.get('config')
         self.thread_stopper.clear()
         self.thread = td.Thread(target=self.readcube_thread)
         self.thread.start()
 
     def readcube_thread(self):
         '''
-        Reads the cube's state as it is. It saves the config internally in the class
-        Requires arm configs
+        Reads the cube's state as it is. 
+        Use self.config - must check if self.config is empty
         '''
         logger.debug('reading cube')
         counter = 100
@@ -496,6 +524,7 @@ class RubiksSolver():
             else:
                 logger.debug('finished reading cube')
                 break
+        self.cubestate = None # assign the cube state
         self.thread_stopper.set()
 
     def solvecube(self, event):
@@ -504,32 +533,50 @@ class RubiksSolver():
         event parameter is necessary for getting the arm configs
         '''
         logger.debug('start thread for solving the cube')
+        self.config = event.kwargs.get('config')
+        self.thread_stopper.clear()
         self.thread = td.Thread(target=self.solvecube_thread)
         self.thread.start()
 
     def solvecube_thread(self):
         '''
-        Solves the cube state as it is. It gets the 
-        Requires arm configs and cube's state
+        Solves the cube state as it is.
+        Use self.config and self.cubestate
         '''
         logger.debug('solving cube')
         counter = 100
         while not self.thread_stopper.is_set():
-            # read the cube here
+            # solve the cube here
             if counter > 0:
                 sleep(0.1)
                 counter -= 1
             else:
                 logger.debug('finished solving cube')
                 break
-    
+        # and also use self.cubestate to get the state of the cube
         self.thread_stopper.set()
 
+    def process_command(self, event):
+        cmd_type = event.kwargs.get('type')
+        if cmd_type == 'system':
+            action = event.kwargs.get('action')
+            
+            if action == 'fix':
+                # fix the cube
+                pass
+            elif action == 'release':
+                # release the cube
+                pass
+
+        elif cmd_type == 'servo':
+            servo = event.kwargs.get('servo')
+            pos = event.kwargs.get('pos')
+            
 
 if __name__ == "__main__":
     hldr = logging.StreamHandler(sys.stdout)
     fmt = logging.Formatter('%(asctime)s %(levelname)2s %(name)s | %(message)s')
-    hldr.setLevel(logging.INFO)
+    hldr.setLevel(logging.DEBUG)
     hldr.setFormatter(fmt)
 
     logger = logging.getLogger(__name__)
@@ -569,35 +616,45 @@ if __name__ == "__main__":
         machine.add_transition(trigger='solve', source='reading', dest='solving', conditions='is_finished', after='solvecube')
         machine.add_transition(trigger='success', source='solving', dest='rest', conditions='is_finished', after='block_solve')
         machine.add_transition(trigger='stop', source='*', dest='rest', after='block_solve')
-        machine.add_transition(trigger='command', source='rest', dest='=')
+        machine.add_transition(trigger='command', source='rest', dest='=', after='process_command')
 
         while not stop_event.is_set():
             for sub, channel in zip(subs, subs_channels):
                 try:
                     message = sub.get(block=False)
                     if channel == 'config':
-                        logger.info('save/load button pressed (update solver configs)')
                         config = message
+                        logger.info('save/load button pressed (update solver configs)')
                     elif channel == 'solver':
                         msg = message.lower()
+                        if 'read cube' == msg:
+                            rubiks.read(config=config) # change state here
+                        elif 'solve cube' == msg:
+                            rubiks.solve(config=config) # change state here
+                        elif 'stop' == msg:
+                            rubiks.stop(hard=False) # change state here
+                        elif 'cut power' == msg:
+                            rubiks.stop(hard=True) # change state here
+                        elif 'fix' == msg:
+                            rubiks.command(type='system', action='fix') # reflexive state here
+                        elif 'release' == msg:
+                            rubiks.command(type='system', action='release') # reflexive state here
                         logger.info("\"" + msg + '\" button pressed')
-                        if 'read' in msg:
-                            rubiks.read(config) # change state here
-                        elif 'solve' in msg:
-                            rubiks.solve(config) # change state here
-                        elif 'stop' in msg:
-                            rubiks.stop() # change state here
                     elif channel == 'arms_play':
                         servo, pos = message
-                        logger.debug('rotate servo {} to position {}'.format(servo, pos))
-                        rubiks.command(servo, pos) # change state here
-                    
-                    # transition to rest from the solving state if the cube got solved
-                    if rubiks.state == 'solving' and rubiks.is_finished(None):
-                        rubiks.success()
+                        rubiks.command(type='servo', servo=servo, pos=pos) # change state here
+                        logger.info('rotate servo {} to position {}'.format(servo, pos))
 
                 except Empty:
-                    continue
+                    pass
+                except transitions.MachineError as error:
+                    logger.warning(error)
+
+                # transition to rest from the solving state if the cube got solved
+                if rubiks.state == 'solving' and rubiks.is_finished(None):
+                    rubiks.success()
+                    logger.info('finished solving cube')
+
             sleep(0.001)
     
     fsm_thread = td.Thread(target=fsm_runner, name='FSM Runner')
