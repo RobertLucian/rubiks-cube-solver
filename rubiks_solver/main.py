@@ -59,25 +59,25 @@ import logging
 import sys
 
 class QueuePubSub():
-    """
+    '''
     Class that implements the notion of subscribers/publishers by using standard queues
-    """
+    '''
     def __init__(self, queues):
         self.queues = queues
 
     def publish(self, channel, message):
-        """
+        '''
         channel - An immutable key that represents the name of the channel. It can be nonexistent.
         message - The message that will be pushed to the queue that's associated to the given channel.
-        """
+        '''
         if channel not in self.queues:
             self.queues[channel] = Queue()
         self.queues[channel].put(message)
     
     def subscribe(self, channel):
-        """
+        '''
         channel - An immutable key that represents the name of the channel. It can be nonexistent.
-        """
+        '''
         if channel not in self.queues:
             self.queues[channel] = Queue()
         return self.queues[channel]
@@ -160,7 +160,7 @@ class Solver(Page):
                 state = 'normal'
             if self.buttons['Solve Cube']['state'] != state:
                 self.buttons['Solve Cube'].config(state=state)
-                logger.info('{} \"Solve Cube\" button'.format(state))
+                logger.info('{} \'Solve Cube\' button'.format(state))
             
             # update both progress bars
             read_progress_bar = update['read_status']
@@ -286,8 +286,8 @@ class Camera(Page):
 class Arms(Page):
     def __init__(self, *args, **kwargs):
         super(Arms, self).__init__(*args, **kwargs)
-        # label = tk.Label(self, text="This is page arms", bg='green', justify=tk.CENTER)
-        # label.pack(side="top", fill="both", expand=True)
+        # label = tk.Label(self, text='This is page arms', bg='green', justify=tk.CENTER)
+        # label.pack(side='top', fill='both', expand=True)
 
         self.channel_cfg = 'config'
         self.channel_play = 'arms_play'
@@ -416,8 +416,8 @@ class MainView(tk.Tk):
         window.columnconfigure(0, weight=1)
 
         # and organize them by rows/columns
-        pages.grid(row=0, column=0, sticky="nswe", padx=2, pady=2)
-        button_navigator.grid(row=1, column=0, sticky="nswe", padx=2, pady=2)
+        pages.grid(row=0, column=0, sticky='nswe', padx=2, pady=2)
+        button_navigator.grid(row=1, column=0, sticky='nswe', padx=2, pady=2)
 
         # create the 3 pages 
         self.frames = {}
@@ -427,7 +427,7 @@ class MainView(tk.Tk):
             self.frames[page_name] = frame
 
         # and link the pages to their respective buttons
-        for label in ("Solver", "Camera", "Arms"):
+        for label in ('Solver', 'Camera', 'Arms'):
             button = tk.Button(button_navigator, text=label, command=self.frames[label].show)
             button.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=3)
 
@@ -444,7 +444,7 @@ class PiCameraPhotos():
         self.rotation = 0
         self.shutter_speed = 1000.0 / self.framerate
         self.brightness = 50
-        self.awb_mode = "off"
+        self.awb_mode = 'off'
         self.awb_gains = 1.5
         
         # also initialize the container for the image
@@ -457,13 +457,11 @@ class PiCameraPhotos():
         logger.info('image captured')
         return Image.open(self.stream)
 
-import random
-
 class RubiksSolver():
     def __init__(self, channel):
         '''
         channel is the channel to which commands have to be posted
-        or "block_solve_button" has to be pushed as message
+        or 'block_solve_button' has to be pushed as message
         '''
         self.pub = QueuePubSub(queues)
         self.channel = channel
@@ -611,7 +609,7 @@ class RubiksSolver():
             pos = event.kwargs.get('pos')
             
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     hldr = logging.StreamHandler(sys.stdout)
     fmt = logging.Formatter('%(asctime)s %(levelname)2s %(name)s | %(message)s')
     hldr.setLevel(logging.DEBUG)
@@ -632,7 +630,7 @@ if __name__ == "__main__":
 
 
     def fsm_runner():
-        # sub/pub channels
+        # sub/pub channels in and from the GUI app
         subs_channels = ['solver', 'config', 'arms_play']
         pubs_channels = ['update']
         subs = [QueuePubSub(queues).subscribe(channel) for channel in subs_channels]
@@ -677,7 +675,7 @@ if __name__ == "__main__":
                             rubiks.command(type='system', action='fix') # reflexive state here
                         elif 'release' == msg:
                             rubiks.command(type='system', action='release') # reflexive state here
-                        logger.info("\"" + msg + '\" button pressed')
+                        logger.info('\'' + msg + '\' button pressed')
                     elif channel == 'arms_play':
                         servo, pos = message
                         rubiks.command(type='servo', servo=servo, pos=pos) # change state here
@@ -699,7 +697,7 @@ if __name__ == "__main__":
     fsm_thread.start()
 
     try:
-        app = MainView(size="800x400", name="Rubik's Solver")
+        app = MainView(size='800x400', name='Rubik\'s Solver')
         app.mainloop()
     except Exception as e:
         logger.exception(e)
