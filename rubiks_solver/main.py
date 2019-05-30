@@ -139,7 +139,7 @@ class Solver(Page):
         self.label_names = new_buttons
         max_button_width = max(map(lambda x: len(x), self.label_names))
         for idx, label_name in enumerate(self.label_names):
-            self.progress_labels[label_name] = tk.Label(self.solver_labelframe, text='n/a', height=1, width=max_button_width, justify=tk.LEFT, anchor=tk.W)
+            self.progress_labels[label_name] = tk.Label(self.solver_labelframe, text='0%', height=1, width=max_button_width, justify=tk.LEFT, anchor=tk.W)
             self.progress_labels[label_name].grid(row=idx, column=2, padx=20, pady=20, sticky='nw')
 
         self.button_names += new_buttons
@@ -152,13 +152,26 @@ class Solver(Page):
 
     def refresh_page(self):
         try:
+            # block or disable the solve button
             update = self.sub.get(block=False)
             if update['solve_button_locked'] is True:
                 state = 'disabled'
             else:
                 state = 'normal'
-            self.buttons['Solve Cube'].config(state=state)
-            logger.info('{} \"Solve Cube\" button'.format(state))
+            if self.buttons['Solve Cube']['state'] != state:
+                self.buttons['Solve Cube'].config(state=state)
+                logger.info('{} \"Solve Cube\" button'.format(state))
+            
+            # update both progress bars
+            read_progress_bar = update['read_status']
+            solve_progress_bar = update['solve_status']
+            self.progress_bars['Read Cube']['value'] = read_progress_bar
+            self.progress_bars['Solve Cube']['value'] = solve_progress_bar
+
+            # update both labels of both progress bars
+            self.progress_labels['Read Cube']['text'] = '{}%'.format(int(read_progress_bar))
+            self.progress_labels['Solve Cube']['text'] = '{}%'.format(int(solve_progress_bar))
+
         except Empty:
             pass
         finally:
@@ -465,7 +478,10 @@ class RubiksSolver():
         '''
         logger.debug('unblock solve button')
         self.pub.publish(self.channel, {
-            'solve_button_locked': False
+            'solve_button_locked': False,
+            'read_status': 0,
+            'solve_status': 0
+
         })
 
     def is_finished(self, event):
@@ -495,7 +511,9 @@ class RubiksSolver():
             logger.debug('soft stop servos')
         # stop the arms here
         self.pub.publish(self.channel, {
-            'solve_button_locked': True
+            'solve_button_locked': True,
+            'read_status': 0,
+            'solve_status': 0
         })
 
     def readcube(self, event):
@@ -515,12 +533,22 @@ class RubiksSolver():
         Use self.config - must check if self.config is empty
         '''
         logger.debug('reading cube')
+        self.pub.publish(self.channel, {
+            'solve_button_locked': False,
+            'read_status': 0,
+            'solve_status': 0
+        })
         counter = 100
         while not self.thread_stopper.is_set():
             # read the cube here
             if counter > 0:
                 sleep(0.1)
                 counter -= 1
+                self.pub.publish(self.channel, {
+                    'solve_button_locked': False,
+                    'read_status': 100 - counter,
+                    'solve_status': 0
+                })
             else:
                 logger.debug('finished reading cube')
                 break
@@ -544,11 +572,21 @@ class RubiksSolver():
         Use self.config and self.cubestate
         '''
         logger.debug('solving cube')
+        self.pub.publish(self.channel, {
+            'solve_button_locked': False,
+            'read_status': 100,
+            'solve_status': 0
+        })
         counter = 100
         while not self.thread_stopper.is_set():
             # solve the cube here
             if counter > 0:
                 sleep(0.1)
+                self.pub.publish(self.channel, {
+                    'solve_button_locked': False,
+                    'read_status': 100,
+                    'solve_status': 100 - counter
+                })
                 counter -= 1
             else:
                 logger.debug('finished solving cube')
