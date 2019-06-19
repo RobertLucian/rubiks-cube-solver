@@ -1,0 +1,1 @@
+{"servos": {"s2": {"low": 45, "high": 140}, "s4": {"low": 49, "high": 142}, "s3": {"low": 53, "high": 143}, "s8": {"low": 43, "high": 137}, "s7": {"low": 38, "high": 128}, "s5": {"low": 81, "high": 124}, "s6": {"low": 63, "high": 160}, "s1": {"low": 120, "high": 163}}, "camera": {"Size (px)": 20, "Pad (px)": 55, "Y Offset (px)": 110, "X Offset (px)": 134}}

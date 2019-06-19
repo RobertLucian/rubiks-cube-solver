@@ -1,48 +1,3 @@
-# import asyncio
-# import json
-# import arms
-# import kociemba
-
-# # to calibrate the arms 
-# # and report the identified colors 
-# # along with the captured images
-# async def configurator():
-#     pass
-
-# # to manipulate/solve/stop the actual cube
-# async def runner():
-#     pass
-
-# # to broadcast the camera feed
-# async def camera():
-#     pass
-
-# # to collect the images for each face of the cube
-# def image_collector():
-#     pass
-
-# # to detect the colors on each face
-# def image_processor():
-#     pass
-
-# # to solve the cube with the Kociemba algorithm
-# def rubik_solver():
-#     pass
-
-# # to convert the output from the solver to 
-# # what the arm generator needs
-# def solver_converter():
-#     pass
-
-# # to convert the generated solution
-# # to whatever the arms need
-# def arm_generator():
-#     pass
-
-# # to apply the solution onto the real-world cube
-# def cube_executor():
-#     pass
-
 from tkinter import ttk
 from queue import Queue
 from queue import Empty
@@ -52,6 +7,8 @@ from PIL import ImageTk, Image, ImageDraw
 import tkinter as tk
 import threading as td
 import picamera
+import arms
+import pivotpi as pp
 import io
 import json
 import transitions
@@ -245,7 +202,7 @@ class Camera(Page):
                         val = config['camera'][key]
                         self.entry_values[key].set(val)
             except:
-                print('config file can\'t be loaded because it doesn\'t exist')
+                logger.warning('config file can\'t be loaded because it doesn\'t exist')
                 config = {}
 
             # save config file
@@ -257,7 +214,7 @@ class Camera(Page):
                     with open(config_file, 'w') as f:
                         json.dump(config, f)
                 except:
-                    print('failed saving the config file')
+                    logger.warning('failed saving the config file')
 
             self.pub.publish(self.channel, config)
 
@@ -273,8 +230,8 @@ class Camera(Page):
             draw = ImageDraw.Draw(img)
             for row in range(3):
                 for col in range(3):
-                    A = [xoff + row * dim + pad, yoff + col * dim + pad]
-                    B = [xoff + (row + 1) * dim, yoff + (col + 1) * dim]
+                    A = [xoff + col * (dim + pad), yoff + row * (dim + pad)]
+                    B = [xoff + col * (dim + pad) + dim, yoff + row * (dim + pad) + dim]
                     draw.rectangle(A + B, width=2)
 
             out = ImageTk.PhotoImage(img)
@@ -370,7 +327,7 @@ class Arms(Page):
                         self.low_servo_vals[idx].set(arm['low'])
                         self.high_servo_vals[idx].set(arm['high'])
             except:
-                print('config file can\'t be loaded because it doesn\'t exist')
+                logger.warning('config file can\'t be loaded because it doesn\'t exist')
                 config = {}
 
             # save config file
@@ -386,7 +343,7 @@ class Arms(Page):
                     with open(config_file, 'w') as f:
                         json.dump(config, f)
                 except:
-                    print('failed saving the config file')
+                    logger.warning('failed saving the config file')
 
             self.pub.publish(self.channel_cfg, config)
 
@@ -445,7 +402,7 @@ class PiCameraPhotos():
         self.shutter_speed = 1000.0 / self.framerate
         self.brightness = 50
         self.awb_mode = 'off'
-        self.awb_gains = 1.5
+        self.awb_gains = 2.0
         
         # also initialize the container for the image
         self.stream = io.BytesIO() 
@@ -469,10 +426,46 @@ class RubiksSolver():
         self.thread = None
         self.cubestate = None
 
+    def __execute_command(self, command):
+        time = command['time']
+        # we know the servo number is the 2nd element of the string
+        servo = int(command['servo'][1]) - 1
+        position = command['position']
+
+        try:
+            pivotpi.angle(servo, position)
+            sleep(time)
+        except:
+            return False
+
+        return True
+
+    def __instantiate_arms_in_release_mode(self, config):
+        robot_arms = []
+        servos = config['servos']
+        keys = list(servos.keys())
+        keys.sort()
+
+        # because there are 4 arms
+        for i in range(4):
+            linear_servo = keys[2 * i]
+            rotational_servo = keys[2 * i + 1]
+            linear_cfg = servos[linear_servo]
+            rotational_cfg = servos[rotational_servo]
+            robot_arms.append(
+                arms.Arm(linear_servo, rotational_servo,
+                         linear_cfg['low'], linear_cfg['high'],
+                         rotational_cfg['low'], rotational_cfg['high'],
+                         linear_cfg['low'], rotational_cfg['low'],
+                         rotation_speed=0.004, command_delay=0.05)
+            )
+
+        return robot_arms
+
     def unblock_solve(self, event):
         '''
         Unblocks the solve button in the GUI
-        event parameter is not necessary here
+        event parameter is not necessary here+
         '''
         logger.debug('unblock solve button')
         self.pub.publish(self.channel, {
@@ -507,7 +500,7 @@ class RubiksSolver():
         else:
             # just stop the motors but don't cut the power
             logger.debug('soft stop servos')
-        # stop the arms here
+        # and publish what's necessary for the GUI
         self.pub.publish(self.channel, {
             'solve_button_locked': True,
             'read_status': 0,
@@ -536,21 +529,57 @@ class RubiksSolver():
             'read_status': 0,
             'solve_status': 0
         })
-        counter = 100
-        while not self.thread_stopper.is_set():
-            # read the cube here
-            if counter > 0:
-                sleep(0.1)
-                counter -= 1
-                self.pub.publish(self.channel, {
-                    'solve_button_locked': False,
-                    'read_status': 100 - counter,
-                    'solve_status': 0
-                })
-            else:
-                logger.debug('finished reading cube')
+
+        # instantiate arms and reposition
+        robot_arms = self.__instantiate_arms_in_release_mode(self.config)
+        generator = arms.ArmSolutionGenerator(*robot_arms)
+        generator.reposition_arms(delay=1.0)
+        generator.fix()
+
+        # generate the sequence of motions and actions to
+        # scan the rubik's cube
+        generator = arms.ArmSolutionGenerator(*robot_arms)
+        generator.append_command('take photo')
+        generator.rotate_cube_towards_right()
+        generator.append_command('take photo')
+        generator.rotate_cube_towards_right()
+        generator.append_command('take photo')
+        generator.rotate_cube_towards_right()
+        generator.append_command('take photo')
+        generator.rotate_cube_upwards()
+        generator.append_command('take photo')
+        generator.rotate_cube_upwards()
+        generator.rotate_cube_upwards()
+        generator.append_command('take photo')
+
+        # get the generated sequence
+        sequence = generator.arms_solution
+
+        # take the photos
+        numeric_faces = []
+        length = len(sequence)
+        for idx, step in enumerate(sequence):
+
+            # quit process if it has been stopped
+            if self.thread_stopper.is_set():
                 break
-        self.cubestate = None # assign the cube state
+
+            # take photos or rotate the bloody cube
+            if step:
+                logger.debug(step)
+                if step == 'take photo':
+                    numeric_faces.append(camera.capture())
+                else:
+                    success = self.__execute_command(step)
+
+            # update the progress bar
+            self.pub.publish(self.channel, {
+                'solve_button_locked': False,
+                'read_status': 100 * (idx + 1) / length,
+                'solve_status': 0
+            })
+
+        self.cubestate = 'something'
         self.thread_stopper.set()
 
     def solvecube(self, event):
@@ -575,6 +604,7 @@ class RubiksSolver():
             'read_status': 100,
             'solve_status': 0
         })
+
         counter = 100
         while not self.thread_stopper.is_set():
             # solve the cube here
@@ -589,24 +619,39 @@ class RubiksSolver():
             else:
                 logger.debug('finished solving cube')
                 break
-        # and also use self.cubestate to get the state of the cube
+
         self.thread_stopper.set()
 
     def process_command(self, event):
+        config = event.kwargs.get('config')
         cmd_type = event.kwargs.get('type')
         if cmd_type == 'system':
             action = event.kwargs.get('action')
-            
+
+            # instantiate arms and reposition
+            robot_arms = self.__instantiate_arms_in_release_mode(config)
+            generator = arms.ArmSolutionGenerator(*robot_arms)
+            generator.reposition_arms(delay=1.0)
+
             if action == 'fix':
-                # fix the cube
-                pass
+                generator.fix()
             elif action == 'release':
-                # release the cube
-                pass
+                generator.release()
+
+            sequence = generator.arms_solution
+            for step in sequence:
+                if step:
+                    logger.debug(step)
+                    success = self.__execute_command(step)
 
         elif cmd_type == 'servo':
-            servo = event.kwargs.get('servo')
-            pos = event.kwargs.get('pos')
+            servo = int(event.kwargs.get('servo'))
+            pos_percent = int(event.kwargs.get('pos'))
+            servo_name = 's{}'.format(servo + 1)
+            low = config['servos'][servo_name]['low']
+            high = config['servos'][servo_name]['high']
+            pos = low + (high - low) * pos_percent / 100
+            pivotpi.angle(servo, pos)
             
 
 if __name__ == '__main__':
@@ -627,6 +672,8 @@ if __name__ == '__main__':
     config_file = 'config.json'
     camera = PiCameraPhotos()
     stop_event = td.Event()
+
+    pivotpi = pp.PivotPi()
 
 
     def fsm_runner():
@@ -659,8 +706,11 @@ if __name__ == '__main__':
                 try:
                     message = sub.get(block=False)
                     if channel == 'config':
-                        config = message
-                        logger.info('save/load button pressed (update solver configs)')
+                        if rubiks.state == 'rest':
+                            config = message
+                            logger.info('save/load button pressed (update solver configs)')
+                        else:
+                            logger.info('save/load button pressed, but not updating the solver configs because it\'s in rest state')
                     elif channel == 'solver':
                         msg = message.lower()
                         if 'read cube' == msg:
@@ -672,13 +722,13 @@ if __name__ == '__main__':
                         elif 'cut power' == msg:
                             rubiks.stop(hard=True) # change state here
                         elif 'fix' == msg:
-                            rubiks.command(type='system', action='fix') # reflexive state here
+                            rubiks.command(config=config, type='system', action='fix') # reflexive state here
                         elif 'release' == msg:
-                            rubiks.command(type='system', action='release') # reflexive state here
+                            rubiks.command( config=config, type='system', action='release') # reflexive state here
                         logger.info('\'' + msg + '\' button pressed')
                     elif channel == 'arms_play':
                         servo, pos = message
-                        rubiks.command(type='servo', servo=servo, pos=pos) # change state here
+                        rubiks.command(config=config, type='servo', servo=servo, pos=pos) # change state here
                         logger.info('rotate servo {} to position {}'.format(servo, pos))
 
                 except Empty:
@@ -689,7 +739,6 @@ if __name__ == '__main__':
                 # transition to rest from the solving state if the cube got solved
                 if rubiks.state == 'solving' and rubiks.is_finished(None):
                     rubiks.success()
-                    logger.info('finished solving cube')
 
             sleep(0.001)
     
@@ -703,6 +752,3 @@ if __name__ == '__main__':
         logger.exception(e)
     finally:
         stop_event.set()
-
-    # camera = PiCameraPhotos()
-    # image = camera.capture()

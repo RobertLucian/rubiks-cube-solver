@@ -214,9 +214,28 @@ class Arm:
         else:
             return None
 
+    def reposition_linear(self, delay=0.0):
+        step = {
+            'servo': self.linear_servo,
+            'linear': True,
+            'rotational': False,
+            'position': self.current_linear,
+            'time': delay
+        }
+        return step
+
+    def reposition_rotational(self, delay=0.0):
+        step = {
+            'servo': self.rotational_servo,
+            'linear': False,
+            'rotational': True,
+            'position': self.current_rotational,
+            'time': delay
+        }
+        return step
 
 class ArmSolutionGenerator:
-    def __init__(self, up, right, down, left):
+    def __init__(self, down, left, up, right):
         self.up = up
         self.right = right
         self.down = down
@@ -248,6 +267,18 @@ class ArmSolutionGenerator:
                 self.down.rotate(State.ANTICLOCKWISE, False, False),
                 self.left.rotate(State.ANTICLOCKWISE)
             ]
+
+    def reposition_arms(self, delay):
+        self.arms_solution += [
+            self.up.reposition_linear(),
+            self.up.reposition_rotational(),
+            self.right.reposition_linear(),
+            self.right.reposition_rotational(),
+            self.down.reposition_linear(),
+            self.down.reposition_rotational(),
+            self.left.reposition_linear(),
+            self.left.reposition_rotational(delay)
+        ]
 
     def reset_arm_solution(self):
         self.arms_solution = []
@@ -463,6 +494,9 @@ class ArmSolutionGenerator:
                             face += rubik_solution[i][1]
                         rubik_solution[i] = face
             index += 1
+
+    def append_command(self, command):
+        self.arms_solution.append(command)
 
 
 if __name__ == "__main__":
