@@ -3,12 +3,18 @@ from queue import Queue
 from queue import Empty
 from time import sleep
 from PIL import ImageTk, Image, ImageDraw
+from sklearn.cluster import KMeans
+from operator import itemgetter
+from collections import Counter
 
 import tkinter as tk
 import threading as td
 import picamera
+import cv2
+import numpy as np
 import arms
 import pivotpi as pp
+import kociemba
 import io
 import json
 import transitions
@@ -424,7 +430,7 @@ class RubiksSolver():
         self.channel = channel
         self.thread_stopper = td.Event()
         self.thread = None
-        self.cubestate = None
+        self.cubesolution = None
 
     def __execute_command(self, command):
         time = command['time']
@@ -461,6 +467,50 @@ class RubiksSolver():
             )
 
         return robot_arms
+
+    def __get_camera_roi(self):
+        xoff = self.config['camera']['X Offset (px)']
+        yoff = self.config['camera']['Y Offset (px)']
+        dim = self.config['camera']['Size (px)']
+        pad = self.config['camera']['Pad (px)']
+        cols_count = rows_count = 3
+        roi = [[0 for x in range(cols_count)] for x in range(rows_count)]
+        for row in range(rows_count):
+            for col in range(cols_count):
+                A = [xoff + col * (dim + pad), yoff + row * (dim + pad)]
+                B = [xoff + col * (dim + pad) + dim, yoff + row * (dim + pad) + dim]
+                roi[row][col] = A + B
+        return roi
+
+    def __get_camera_color_patches(self, img):
+        roi = self.__get_camera_roi()
+        rgb_color_patches = np.zeros(shape=(3, 3, 3), dtype=np.uint8)
+        for row in range(3):
+            for col in range(3):
+                cropped = img.crop(roi[row][col])
+                temp = np.array(cropped)
+                temp = temp.reshape(temp.shape[0] * temp.shape[1], temp.shape[2])
+                rgb_pixel = temp.mean(axis=0)
+                rgb_color_patches[row, col, :] = [int(x) for x in rgb_pixel]
+
+        lab_color_patches = cv2.cvtColor(rgb_color_patches, cv2.COLOR_RGB2LAB)
+        return lab_color_patches
+
+    def __generate_handwritten_solution_from_cube_state(self, cube_centers, rubiks_labels):
+        # generate dictionary to map between center labels as
+        # digits to labels as a handwritten notation: URFDLB
+        kociembas_input_labels = {}
+        for center, label in zip(cube_centers, 'U R F D L B'.split()):
+            kociembas_input_labels[center] = label
+
+        # generate the cube's state as a list of strings of 6x9 labels
+        cubestate = [kociembas_input_labels[label] for label in rubiks_labels]
+        cubestate = ''.join(cubestate)
+
+        solved = kociemba.solve(cubestate)
+        solved = solved.split(' ')
+
+        return solved
 
     def unblock_solve(self, event):
         '''
@@ -555,23 +605,25 @@ class RubiksSolver():
         # get the generated sequence
         sequence = generator.arms_solution
 
-        # take the photos
+        # execute the generated sequence of motions
+        # while at the same time capturing the photos of the cube
         numeric_faces = []
         length = len(sequence)
         for idx, step in enumerate(sequence):
-
             # quit process if it has been stopped
             if self.thread_stopper.is_set():
                 break
-
             # take photos or rotate the bloody cube
             if step:
-                logger.debug(step)
+                # logger.debug(step)
                 if step == 'take photo':
-                    numeric_faces.append(camera.capture())
+                    img = camera.capture()
+                    lab_face = self.__get_camera_color_patches(img)
+                    # lab_face = lab_face.reshape((3*3, 3))
+                    numeric_faces.append(lab_face)
                 else:
                     success = self.__execute_command(step)
-
+                    # pass
             # update the progress bar
             self.pub.publish(self.channel, {
                 'solve_button_locked': False,
@@ -579,7 +631,50 @@ class RubiksSolver():
                 'solve_status': 0
             })
 
-        self.cubestate = 'something'
+        # reorder faces based on the current position of the rubik's cube
+        # after it has been rotated multiple times to scan its labels
+        # and also map the labels so that they match the pattern imposed
+        # by muodov/kociemba's library: URFDLB.
+        reoriented_faces = [
+            np.rot90(numeric_faces[3], k=2),  # rotate by 180 degrees
+            np.rot90(numeric_faces[0], k=1, axes=(0, 1)),  # rotate by 90 degrees anticlockwise
+            numeric_faces[5],
+            numeric_faces[1],
+            np.rot90(numeric_faces[2], k=1, axes=(1, 0)),  # rotate by 90 degrees clockwise
+            np.rot90(numeric_faces[4], k=2)  # rotate by 180 degrees
+        ]
+
+        # reshape the little bastard faces to be "fittable" by the KMeans algorithm
+        for i in range(6):
+            reoriented_faces[i] = reoriented_faces[i].reshape((3*3, 3))
+
+        # clusterize the labels on the rubik's cube
+        rubiks_colors = np.concatenate(reoriented_faces, axis=0)
+        kmeans = KMeans(n_clusters=6).fit(rubiks_colors)
+        rubiks_labels = kmeans.labels_
+
+        # get the cube's centers as numeric values
+        center_indexes = [4, 13, 22, 31, 40, 49] # cube centers when flattened
+        cube_centers = list(itemgetter(*center_indexes)(rubiks_labels))
+        labels_of_each_color = list(Counter(rubiks_labels))
+
+        logger.debug(labels_of_each_color)
+        logger.debug(cube_centers)
+        logger.debug(reoriented_faces)
+
+        # check if the centers each has a different label
+        if len(set(cube_centers)) != 6:
+            self.cubesolution = None
+            logger.warning('didn\'t find the 6 cube centers of the rubik\'s cube')
+        # check if there's an equal number of labels for each color of all six of them
+        elif len(set(labels_of_each_color)) != 1:
+            self.cubesolution = None
+            logger.warning('found a different number of labels for some centers off the cube')
+        else:
+            # if both tests from the above are a go then go and solve the cube
+            self.cubesolution = self.__generate_handwritten_solution_from_cube_state(cube_centers, rubiks_labels)
+            logger.debug(self.cubesolution)
+
         self.thread_stopper.set()
 
     def solvecube(self, event):
@@ -596,7 +691,7 @@ class RubiksSolver():
     def solvecube_thread(self):
         '''
         Solves the cube state as it is.
-        Use self.config and self.cubestate
+        Use self.config and self.cubesolution
         '''
         logger.debug('solving cube')
         self.pub.publish(self.channel, {
