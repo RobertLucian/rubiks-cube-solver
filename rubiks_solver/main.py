@@ -401,14 +401,16 @@ class PiCameraPhotos():
     def __init__(self):
         # initialize camera with a set of predefined values
         self.camera = picamera.PiCamera()
-        self.resolution = (1920, 1080)
-        self.framerate = 30
-        self.sensor_mode = 1
-        self.rotation = 0
-        self.shutter_speed = 1000.0 / self.framerate
-        self.brightness = 50
-        self.awb_mode = 'off'
-        self.awb_gains = 2.0
+        # self.camera.resolution = (1920, 1080)
+        # self.camera.framerate = 30
+        # self.camera.sensor_mode = 1
+        # self.camera.rotation = 180
+        # self.camera.shutter_speed = 32000
+        # self.camera.brightness = 60
+        # self.camera.exposure_mode = 'off'
+        self.camera.rotation = 180
+        self.camera.awb_mode = 'off'
+        self.camera.awb_gains = 1.45
         
         # also initialize the container for the image
         self.stream = io.BytesIO() 
@@ -609,6 +611,7 @@ class RubiksSolver():
         # while at the same time capturing the photos of the cube
         numeric_faces = []
         length = len(sequence)
+        pic_counter = 0
         for idx, step in enumerate(sequence):
             # quit process if it has been stopped
             if self.thread_stopper.is_set():
@@ -621,6 +624,19 @@ class RubiksSolver():
                     lab_face = self.__get_camera_color_patches(img)
                     # lab_face = lab_face.reshape((3*3, 3))
                     numeric_faces.append(lab_face)
+
+                    xoff = self.config['camera']['X Offset (px)']
+                    yoff = self.config['camera']['Y Offset (px)']
+                    dim = self.config['camera']['Size (px)']
+                    pad = self.config['camera']['Pad (px)']
+                    draw = ImageDraw.Draw(img)
+                    for row in range(3):
+                        for col in range(3):
+                            A = [xoff + col * (dim + pad), yoff + row * (dim + pad)]
+                            B = [xoff + col * (dim + pad) + dim, yoff + row * (dim + pad) + dim]
+                            draw.rectangle(A + B, width=2)
+                    img.save("{}.png".format(pic_counter))
+                    pic_counter += 1
                 else:
                     success = self.__execute_command(step)
                     # pass
@@ -636,10 +652,10 @@ class RubiksSolver():
         # and also map the labels so that they match the pattern imposed
         # by muodov/kociemba's library: URFDLB.
         reoriented_faces = [
-            np.rot90(numeric_faces[3], k=2),  # rotate by 180 degrees
+            np.rot90(numeric_faces[1], k=2),  # rotate by 180 degrees
             np.rot90(numeric_faces[0], k=1, axes=(0, 1)),  # rotate by 90 degrees anticlockwise
             numeric_faces[5],
-            numeric_faces[1],
+            numeric_faces[3],
             np.rot90(numeric_faces[2], k=1, axes=(1, 0)),  # rotate by 90 degrees clockwise
             np.rot90(numeric_faces[4], k=2)  # rotate by 180 degrees
         ]
@@ -653,10 +669,12 @@ class RubiksSolver():
         kmeans = KMeans(n_clusters=6).fit(rubiks_colors)
         rubiks_labels = kmeans.labels_
 
+        logger.debug(rubiks_labels.reshape((6,3,3)))
+
         # get the cube's centers as numeric values
         center_indexes = [4, 13, 22, 31, 40, 49] # cube centers when flattened
         cube_centers = list(itemgetter(*center_indexes)(rubiks_labels))
-        labels_of_each_color = list(Counter(rubiks_labels))
+        labels_of_each_color = dict(Counter(rubiks_labels))
 
         logger.debug(labels_of_each_color)
         logger.debug(cube_centers)
@@ -667,7 +685,7 @@ class RubiksSolver():
             self.cubesolution = None
             logger.warning('didn\'t find the 6 cube centers of the rubik\'s cube')
         # check if there's an equal number of labels for each color of all six of them
-        elif len(set(labels_of_each_color)) != 1:
+        elif len(set(labels_of_each_color.values())) != 1:
             self.cubesolution = None
             logger.warning('found a different number of labels for some centers off the cube')
         else:
