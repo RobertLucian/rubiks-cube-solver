@@ -410,7 +410,7 @@ class PiCameraPhotos():
         # self.camera.exposure_mode = 'off'
         self.camera.rotation = 180
         self.camera.awb_mode = 'off'
-        self.camera.awb_gains = 1.45
+        self.camera.awb_gains = 1.63
         
         # also initialize the container for the image
         self.stream = io.BytesIO() 
@@ -448,9 +448,17 @@ class RubiksSolver():
 
         return True
 
-    def __instantiate_arms_in_release_mode(self, config):
+    def __instantiate_arms(self, config, mode):
         robot_arms = []
         servos = config['servos']
+
+        if mode == 'fix':
+            pos = 'low'
+        elif mode == 'release':
+            pos = 'high'
+        else:
+            return None
+
         keys = list(servos.keys())
         keys.sort()
 
@@ -464,11 +472,17 @@ class RubiksSolver():
                 arms.Arm(linear_servo, rotational_servo,
                          linear_cfg['low'], linear_cfg['high'],
                          rotational_cfg['low'], rotational_cfg['high'],
-                         linear_cfg['low'], rotational_cfg['low'],
+                         linear_cfg[pos], rotational_cfg['low'],
                          rotation_speed=0.004, command_delay=0.05)
             )
 
         return robot_arms
+
+    def __instantiate_arms_in_release_mode(self, config):
+        return self.__instantiate_arms(config, mode='release')
+
+    def __instantiate_arms_in_fix_mode(self, config):
+        return self.__instantiate_arms(config, mode='fix')
 
     def __get_camera_roi(self):
         xoff = self.config['camera']['X Offset (px)']
@@ -611,7 +625,7 @@ class RubiksSolver():
         # while at the same time capturing the photos of the cube
         numeric_faces = []
         length = len(sequence)
-        pic_counter = 0
+        # pic_counter = 0
         for idx, step in enumerate(sequence):
             # quit process if it has been stopped
             if self.thread_stopper.is_set():
@@ -624,22 +638,21 @@ class RubiksSolver():
                     lab_face = self.__get_camera_color_patches(img)
                     # lab_face = lab_face.reshape((3*3, 3))
                     numeric_faces.append(lab_face)
-
-                    xoff = self.config['camera']['X Offset (px)']
-                    yoff = self.config['camera']['Y Offset (px)']
-                    dim = self.config['camera']['Size (px)']
-                    pad = self.config['camera']['Pad (px)']
-                    draw = ImageDraw.Draw(img)
-                    for row in range(3):
-                        for col in range(3):
-                            A = [xoff + col * (dim + pad), yoff + row * (dim + pad)]
-                            B = [xoff + col * (dim + pad) + dim, yoff + row * (dim + pad) + dim]
-                            draw.rectangle(A + B, width=2)
-                    img.save("{}.png".format(pic_counter))
-                    pic_counter += 1
+                    #
+                    # xoff = self.config['camera']['X Offset (px)']
+                    # yoff = self.config['camera']['Y Offset (px)']
+                    # dim = self.config['camera']['Size (px)']
+                    # pad = self.config['camera']['Pad (px)']
+                    # draw = ImageDraw.Draw(img)
+                    # for row in range(3):
+                    #     for col in range(3):
+                    #         A = [xoff + col * (dim + pad), yoff + row * (dim + pad)]
+                    #         B = [xoff + col * (dim + pad) + dim, yoff + row * (dim + pad) + dim]
+                    #         draw.rectangle(A + B, width=2)
+                    # img.save("{}.png".format(pic_counter))
+                    # pic_counter += 1
                 else:
                     success = self.__execute_command(step)
-                    # pass
             # update the progress bar
             self.pub.publish(self.channel, {
                 'solve_button_locked': False,
@@ -718,20 +731,30 @@ class RubiksSolver():
             'solve_status': 0
         })
 
-        counter = 100
-        while not self.thread_stopper.is_set():
-            # solve the cube here
-            if counter > 0:
-                sleep(0.1)
-                self.pub.publish(self.channel, {
-                    'solve_button_locked': False,
-                    'read_status': 100,
-                    'solve_status': 100 - counter
-                })
-                counter -= 1
-            else:
-                logger.debug('finished solving cube')
-                break
+        # stop this thread if there's no solution
+        if not self.cubesolution:
+            self.thread_stopper.set()
+            return
+
+        # otherwise instantiate the arms and reposition (and eventually solve the cube)
+        robot_arms = self.__instantiate_arms_in_fix_mode(self.config)
+        generator = arms.ArmSolutionGenerator(*robot_arms)
+        generator.solution(self.cubesolution)
+
+        # get the generated sequence
+        sequence = generator.arms_solution
+
+        # solve the rubik's cube by actuating the arms
+        length = len(sequence)
+        for idx, step in enumerate(sequence):
+            if step:
+                success = self.__execute_command(step)
+            self.pub.publish(self.channel, {
+                'solve_button_locked': False,
+                'read_status': 100,
+                'solve_status':  100 * (idx + 1) / length
+            })
+            idx += 1
 
         self.thread_stopper.set()
 
