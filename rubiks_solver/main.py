@@ -226,25 +226,17 @@ class Camera(Page):
 
         # if we have to get a preview
         if label == self.button_names[2]:
-            # img = ImageTk.PhotoImage(camera.capture())
-            img = camera.capture()
-            
             xoff = self.entry_values['X Offset (px)'].get()
             yoff = self.entry_values['Y Offset (px)'].get()
             dim = self.entry_values['Size (px)'].get()
             pad = self.entry_values['Pad (px)'].get()
-            draw = ImageDraw.Draw(img)
-            for row in range(3):
-                for col in range(3):
-                    A = [xoff + col * (dim + pad), yoff + row * (dim + pad)]
-                    B = [xoff + col * (dim + pad) + dim, yoff + row * (dim + pad) + dim]
-                    draw.rectangle(A + B, width=2)
 
+            img = camera.get_overlayed_processed_image(xoff, yoff, dim, pad)
+            img = Image.fromarray(img)
             out = ImageTk.PhotoImage(img)
 
             self.images.configure(image=out)
             self.images.image = out
-
 
 class Arms(Page):
     def __init__(self, *args, **kwargs):
@@ -422,6 +414,72 @@ class PiCameraPhotos():
         logger.info('image captured')
         return Image.open(self.stream)
 
+    def get_camera_roi(self, xoff, yoff, dim, pad):
+        cols_count = rows_count = 3
+        roi = [[0 for x in range(cols_count)] for x in range(rows_count)]
+        for row in range(rows_count):
+            for col in range(cols_count):
+                roi[row][col] = {
+                    'x': xoff + col * (dim + pad),
+                    'y': yoff + row * (dim + pad),
+                    'dim': dim
+                }
+        return roi
+
+    def get_processed_image(self):
+        img = self.capture()
+        img = np.asarray(img)
+
+        # img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+        # clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(6, 6))
+        # img[:, :, 0] = clahe.apply(img[:, :, 0])
+        # img = cv2.cvtColor(img, cv2.COLOR_LAB2RGB)
+
+        img = cv2.GaussianBlur(img, (7, 7), sigmaX=0.0)
+
+        satadj = 1.0
+        imghsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        (h, s, v) = cv2.split(imghsv.astype(np.float32))
+        s = s * satadj
+        s = np.clip(s, 0, 255)
+        imghsv = cv2.merge((h, s, v))
+        imghsv = imghsv.astype(dtype=np.uint8)
+        imgsat = cv2.cvtColor(imghsv, cv2.COLOR_HSV2RGB)
+
+        return imgsat
+
+    def get_overlayed_processed_image(self, xoff, yoff, dim, pad):
+        img = self.get_processed_image()
+        roi = self.get_camera_roi(xoff, yoff, dim, pad)
+
+        for rectangles in roi:
+            for rectangle in rectangles:
+                x = rectangle['x']
+                y = rectangle['y']
+                dim = rectangle['dim']
+                cv2.rectangle(img, (x, y), (x+dim, y+dim), (255,255,255), thickness=2)
+
+        return img
+
+    def get_camera_color_patches(self, xoff, yoff, dim, pad):
+        img = self.get_processed_image()
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+        roi = self.get_camera_roi(xoff, yoff, dim, pad)
+        color_patches = np.zeros(shape=(3, 3, 3), dtype=np.uint8)
+
+        for row in range(3):
+            for col in range(3):
+                cropper = roi[row][col]
+                x = cropper['x']
+                y = cropper['y']
+                dim = cropper['dim']
+                temp = img[y:y+dim, x:x+dim]
+                temp = temp.reshape(temp.shape[0] * temp.shape[1], temp.shape[2])
+                pixel = temp.mean(axis=0)
+                color_patches[row, col, :] = [int(x) for x in pixel]
+
+        return color_patches
+
 class RubiksSolver():
     def __init__(self, channel):
         '''
@@ -484,34 +542,6 @@ class RubiksSolver():
     def __instantiate_arms_in_fix_mode(self, config):
         return self.__instantiate_arms(config, mode='fix')
 
-    def __get_camera_roi(self):
-        xoff = self.config['camera']['X Offset (px)']
-        yoff = self.config['camera']['Y Offset (px)']
-        dim = self.config['camera']['Size (px)']
-        pad = self.config['camera']['Pad (px)']
-        cols_count = rows_count = 3
-        roi = [[0 for x in range(cols_count)] for x in range(rows_count)]
-        for row in range(rows_count):
-            for col in range(cols_count):
-                A = [xoff + col * (dim + pad), yoff + row * (dim + pad)]
-                B = [xoff + col * (dim + pad) + dim, yoff + row * (dim + pad) + dim]
-                roi[row][col] = A + B
-        return roi
-
-    def __get_camera_color_patches(self, img):
-        roi = self.__get_camera_roi()
-        rgb_color_patches = np.zeros(shape=(3, 3, 3), dtype=np.uint8)
-        for row in range(3):
-            for col in range(3):
-                cropped = img.crop(roi[row][col])
-                temp = np.array(cropped)
-                temp = temp.reshape(temp.shape[0] * temp.shape[1], temp.shape[2])
-                rgb_pixel = temp.mean(axis=0)
-                rgb_color_patches[row, col, :] = [int(x) for x in rgb_pixel]
-
-        lab_color_patches = cv2.cvtColor(rgb_color_patches, cv2.COLOR_RGB2LAB)
-        return lab_color_patches
-
     def __generate_handwritten_solution_from_cube_state(self, cube_centers, rubiks_labels):
         # generate dictionary to map between center labels as
         # digits to labels as a handwritten notation: URFDLB
@@ -547,7 +577,7 @@ class RubiksSolver():
         (for solving or reading the cube)
         event parameter is not necessary here
         '''
-        logger.debug('check if cube has finished reading/solving')
+        # logger.debug('check if cube has finished reading/solving')
         return self.thread_stopper.is_set()
 
     def block_solve(self, event):
@@ -618,6 +648,9 @@ class RubiksSolver():
         generator.rotate_cube_upwards()
         generator.append_command('take photo')
 
+        # save the generator for solving the cube
+        self.generator = generator
+
         # get the generated sequence
         sequence = generator.arms_solution
 
@@ -625,7 +658,7 @@ class RubiksSolver():
         # while at the same time capturing the photos of the cube
         numeric_faces = []
         length = len(sequence)
-        # pic_counter = 0
+        pic_counter = 0
         for idx, step in enumerate(sequence):
             # quit process if it has been stopped
             if self.thread_stopper.is_set():
@@ -634,23 +667,17 @@ class RubiksSolver():
             if step:
                 # logger.debug(step)
                 if step == 'take photo':
-                    img = camera.capture()
-                    lab_face = self.__get_camera_color_patches(img)
-                    # lab_face = lab_face.reshape((3*3, 3))
+                    xoff = self.config['camera']['X Offset (px)']
+                    yoff = self.config['camera']['Y Offset (px)']
+                    dim = self.config['camera']['Size (px)']
+                    pad = self.config['camera']['Pad (px)']
+                    lab_face = camera.get_camera_color_patches(xoff, yoff, dim, pad)
                     numeric_faces.append(lab_face)
-                    #
-                    # xoff = self.config['camera']['X Offset (px)']
-                    # yoff = self.config['camera']['Y Offset (px)']
-                    # dim = self.config['camera']['Size (px)']
-                    # pad = self.config['camera']['Pad (px)']
-                    # draw = ImageDraw.Draw(img)
-                    # for row in range(3):
-                    #     for col in range(3):
-                    #         A = [xoff + col * (dim + pad), yoff + row * (dim + pad)]
-                    #         B = [xoff + col * (dim + pad) + dim, yoff + row * (dim + pad) + dim]
-                    #         draw.rectangle(A + B, width=2)
-                    # img.save("{}.png".format(pic_counter))
-                    # pic_counter += 1
+
+                    img = camera.get_processed_image()
+                    img = Image.fromarray(img)
+                    img.save("{}.png".format(pic_counter))
+                    pic_counter += 1
                 else:
                     success = self.__execute_command(step)
             # update the progress bar
@@ -679,7 +706,7 @@ class RubiksSolver():
 
         # clusterize the labels on the rubik's cube
         rubiks_colors = np.concatenate(reoriented_faces, axis=0)
-        kmeans = KMeans(n_clusters=6).fit(rubiks_colors)
+        kmeans = KMeans(n_clusters=6, n_init=50).fit(rubiks_colors)
         rubiks_labels = kmeans.labels_
 
         logger.debug(rubiks_labels.reshape((6,3,3)))
@@ -737,12 +764,18 @@ class RubiksSolver():
             return
 
         # otherwise instantiate the arms and reposition (and eventually solve the cube)
-        robot_arms = self.__instantiate_arms_in_fix_mode(self.config)
-        generator = arms.ArmSolutionGenerator(*robot_arms)
+        # robot_arms = self.__instantiate_arms_in_fix_mode(self.config)
+        # generator = arms.ArmSolutionGenerator(*robot_arms)
+        generator = self.generator
+        generator.reset_arm_solution()
         generator.solution(self.cubesolution)
 
         # get the generated sequence
         sequence = generator.arms_solution
+
+        logger.debug('solutie cub')
+        for step in sequence:
+            logger.debug(step)
 
         # solve the rubik's cube by actuating the arms
         length = len(sequence)
