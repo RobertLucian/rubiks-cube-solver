@@ -1,1 +1,42 @@
-{"servos": {"s5": {"high": 124, "low": 81}, "s1": {"high": 163, "low": 120}, "s7": {"high": 129, "low": 39}, "s6": {"high": 160, "low": 63}, "s4": {"high": 142, "low": 49}, "s8": {"high": 137, "low": 43}, "s3": {"high": 144, "low": 54}, "s2": {"high": 140, "low": 45}}, "camera": {"X Offset (px)": 178, "Size (px)": 13, "Pad (px)": 45, "Y Offset (px)": 113}}
+{
+    "camera": {
+        "Pad (px)": 45,
+        "Size (px)": 13,
+        "X Offset (px)": 178,
+        "Y Offset (px)": 113
+    },
+    "servos": {
+        "s1": {
+            "high": 163,
+            "low": 120
+        },
+        "s2": {
+            "high": 140,
+            "low": 45
+        },
+        "s3": {
+            "high": 144,
+            "low": 54
+        },
+        "s4": {
+            "high": 142,
+            "low": 49
+        },
+        "s5": {
+            "high": 124,
+            "low": 81
+        },
+        "s6": {
+            "high": 160,
+            "low": 63
+        },
+        "s7": {
+            "high": 129,
+            "low": 39
+        },
+        "s8": {
+            "high": 137,
+            "low": 43
+        }
+    }
+}
