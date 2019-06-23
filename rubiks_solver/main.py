@@ -218,7 +218,7 @@ class Camera(Page):
                     config['camera'][key] = self.entry_values[key].get()
                 try:
                     with open(config_file, 'w') as f:
-                        json.dump(config, f)
+                        json.dump(config, f, indent=4, sort_keys=True)
                 except:
                     logger.warning('failed saving the config file')
 
@@ -339,7 +339,7 @@ class Arms(Page):
                     config['servos']['s{}'.format(idx + 1)] = arm
                 try:
                     with open(config_file, 'w') as f:
-                        json.dump(config, f)
+                        json.dump(config, f, indent=4, sort_keys=True)
                 except:
                     logger.warning('failed saving the config file')
 
@@ -408,6 +408,10 @@ class PiCameraPhotos():
         self.stream = io.BytesIO() 
 
     def capture(self):
+        """
+        Captures an image from the Pi Camera.
+        :return: A Pillow.Image image.
+        """
         self.stream.seek(0)
         self.camera.capture(self.stream, use_video_port=True, resize=(480, 360), format='jpeg')
         self.stream.seek(0)
@@ -415,6 +419,15 @@ class PiCameraPhotos():
         return Image.open(self.stream)
 
     def get_camera_roi(self, xoff, yoff, dim, pad):
+        """
+        Computes the Regions-of-Interest for the cube's labels.
+        :param xoff: Offset in pixels on the X axis.
+        :param yoff: Offset in pixels on the Y axis.
+        :param dim: Dimension of the squared box that sits on top of a label. Measured in pixels.
+        :param pad: Pad distance between squared boxes.
+        :return: A 3x3 list with each element containing a dictionary with 'x', 'y', 'dim' labels
+        representing the top left corner of a label and the dimension of that squared box.
+        """
         cols_count = rows_count = 3
         roi = [[0 for x in range(cols_count)] for x in range(rows_count)]
         for row in range(rows_count):
@@ -427,28 +440,48 @@ class PiCameraPhotos():
         return roi
 
     def get_processed_image(self):
+        """
+        Captures an image and processes it. It applies the CLAHE algorithm,
+        a Gaussian blur and an increase of the image's saturation by a fixed amount.
+        :return: RGB image as numpy array.
+        """
+
+        # convert the captured image to a numpy array
         img = self.capture()
         img = np.asarray(img)
 
+        # # apply CLAHE algorithm to increase contrast in
+        # # low lighting areas of the image and preserve
+        # # the contrast in good ones
         # img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
         # clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(6, 6))
         # img[:, :, 0] = clahe.apply(img[:, :, 0])
         # img = cv2.cvtColor(img, cv2.COLOR_LAB2RGB)
 
+        # apply a Gaussian blur
         img = cv2.GaussianBlur(img, (7, 7), sigmaX=0.0)
 
-        satadj = 1.0
-        imghsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-        (h, s, v) = cv2.split(imghsv.astype(np.float32))
-        s = s * satadj
-        s = np.clip(s, 0, 255)
-        imghsv = cv2.merge((h, s, v))
-        imghsv = imghsv.astype(dtype=np.uint8)
-        imgsat = cv2.cvtColor(imghsv, cv2.COLOR_HSV2RGB)
+        # # increase saturation by satadj amount
+        # satadj = 1.0
+        # imghsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        # (h, s, v) = cv2.split(imghsv.astype(np.float32))
+        # s = s * satadj
+        # s = np.clip(s, 0, 255)
+        # imghsv = cv2.merge((h, s, v))
+        # imghsv = imghsv.astype(dtype=np.uint8)
+        # imgsat = cv2.cvtColor(imghsv, cv2.COLOR_HSV2RGB)
+        # img = imgsat
 
-        return imgsat
+        return img
 
     def get_overlayed_processed_image(self, xoff, yoff, dim, pad):
+        """
+        Captures an image, processes it and draws the Regions-of-Interest
+        on the image itself.
+        It needs the `xoff`, `yoff`, `dim` and `pad` arguments when calling get_camera_roi
+        method.
+        :return: RGB image as numpy array.
+        """
         img = self.get_processed_image()
         roi = self.get_camera_roi(xoff, yoff, dim, pad)
 
@@ -462,6 +495,14 @@ class PiCameraPhotos():
         return img
 
     def get_camera_color_patches(self, xoff, yoff, dim, pad):
+        """
+        Captures an image, processes it and selects the Regions-of-Interest, after which
+        they get averaged and a array of 3x3x3 elements are returned: 3x3 labels by 3
+        channels. Each pixel needs 3 channels.
+        It needs the `xoff`, `yoff`, `dim` and `pad` arguments when calling get_camera_roi
+        method.
+        :return: A LAB image as a 3x3x3 numpy array for all 9 labels of a cube's face.
+        """
         img = self.get_processed_image()
         img = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
         roi = self.get_camera_roi(xoff, yoff, dim, pad)
@@ -482,10 +523,10 @@ class PiCameraPhotos():
 
 class RubiksSolver():
     def __init__(self, channel):
-        '''
-        channel is the channel to which commands have to be posted
-        or 'block_solve_button' has to be pushed as message
-        '''
+        """
+        Initialize a model object for the FSM.
+        :param channel: The channel to which commands have to be published.
+        """
         self.pub = QueuePubSub(queues)
         self.channel = channel
         self.thread_stopper = td.Event()
@@ -493,11 +534,20 @@ class RubiksSolver():
         self.cubesolution = None
 
     def __execute_command(self, command):
+        """
+        Execute a command on the PivotPi.
+        :param command: A dictionary containing the 'time', 'servo' and
+        'position' keys representing the time needed for the command to get
+        executed, the servo onto which the action has to be applied (starts from 1)
+        and the position in degrees at which the servo has to move to.
+        :return: True if it succeeded or False otherwise.
+        """
         time = command['time']
         # we know the servo number is the 2nd element of the string
         servo = int(command['servo'][1]) - 1
         position = command['position']
 
+        # move the servo
         try:
             pivotpi.angle(servo, position)
             sleep(time)
@@ -507,6 +557,12 @@ class RubiksSolver():
         return True
 
     def __instantiate_arms(self, config, mode):
+        """
+        Initialize the robot's arms either in released or fixed mode.
+        :param config: The configuration dictionary as it comes from the GUI app.
+        :param mode: 'fix' or 'release'.
+        :return: A list of 4 elements with instances of the arms.Arm class.
+        """
         robot_arms = []
         servos = config['servos']
 
@@ -537,12 +593,31 @@ class RubiksSolver():
         return robot_arms
 
     def __instantiate_arms_in_release_mode(self, config):
+        """
+        Same thing as calling __instantiate_arms with mode set to 'release'.
+        :param config: The configuration dictionary as it comes from the GUI app.
+        :return: A list of 4 elements with instances of the arms.Arm class.
+        """
         return self.__instantiate_arms(config, mode='release')
 
     def __instantiate_arms_in_fix_mode(self, config):
+        """
+        Same thing as calling __instantiate_arms with mode set to 'fix'.
+        :param config: The configuration dictionary as it comes from the GUI app.
+        :return: A list of 4 elements with instances of the arms.Arm class.
+        """
         return self.__instantiate_arms(config, mode='fix')
 
     def __generate_handwritten_solution_from_cube_state(self, cube_centers, rubiks_labels):
+        """
+        Generate movement solution for the robot's arms. This method returns the sequence of
+        steps required for the robot to solve the cube.
+
+        :param cube_centers: A 6-element list containing the numeric labels for each face's center.
+        :param rubiks_labels: Flattened Rubik's cube labels in the order expected by the muodov/kociemba library.
+        These labels are numeric.
+        :return:
+        """
         # generate dictionary to map between center labels as
         # digits to labels as a handwritten notation: URFDLB
         kociembas_input_labels = {}
@@ -553,16 +628,18 @@ class RubiksSolver():
         cubestate = [kociembas_input_labels[label] for label in rubiks_labels]
         cubestate = ''.join(cubestate)
 
+        # generate the solution for the given cube's state
         solved = kociemba.solve(cubestate)
         solved = solved.split(' ')
 
         return solved
 
     def unblock_solve(self, event):
-        '''
-        Unblocks the solve button in the GUI
-        event parameter is not necessary here+
-        '''
+        """
+        Unblock the solve button in the GUI app.
+        :param event: Unnecessary.
+        :return: Nothing.
+        """
         logger.debug('unblock solve button')
         self.pub.publish(self.channel, {
             'solve_button_locked': False,
@@ -572,19 +649,20 @@ class RubiksSolver():
         })
 
     def is_finished(self, event):
-        '''
-        Checks if any thread that runs in the background has finished 
-        (for solving or reading the cube)
-        event parameter is not necessary here
-        '''
-        # logger.debug('check if cube has finished reading/solving')
+        """
+        Checks if any thread that runs in the background has finished (
+        either for solving or reading the cube).
+        :param event: Not necessary.
+        :return: Whether the thread is still running or not.
+        """
         return self.thread_stopper.is_set()
 
     def block_solve(self, event):
-        '''
-        Blocks the solve button and resets the arms in the released position
-        event parameter is necessary for getting the arm configs
-        '''
+        """
+        Blocks the solve button and stops the arms' motors.
+        :param event: Not necessary here.
+        :return: Nothing.
+        """
         logger.debug('block solve button')
         if self.thread != None and not self.thread_stopper.is_set():
             self.thread_stopper.set()
@@ -604,10 +682,11 @@ class RubiksSolver():
         })
 
     def readcube(self, event):
-        '''
-        Spins the thread for readcube_thread method
-        event parameter is necessary for getting the arm configs
-        '''
+        """
+        Spins up the thread for readcube_thread method.
+        :param event: Is a dictionary that contains the arm configs as received from the GUI app.
+        :return: Nothing.
+        """
         logger.debug('start thread for reading the cube')
         self.config = event.kwargs.get('config')
         self.thread_stopper.clear()
@@ -615,10 +694,10 @@ class RubiksSolver():
         self.thread.start()
 
     def readcube_thread(self):
-        '''
-        Reads the cube's state as it is. 
-        Use self.config - must check if self.config is empty
-        '''
+        """
+        Method which scans the cube's surface.
+        :return: Nothing.
+        """
         logger.debug('reading cube')
         self.pub.publish(self.channel, {
             'solve_button_locked': False,
@@ -658,14 +737,14 @@ class RubiksSolver():
         # while at the same time capturing the photos of the cube
         numeric_faces = []
         length = len(sequence)
-        pic_counter = 0
+        # pic_counter = 0
         for idx, step in enumerate(sequence):
             # quit process if it has been stopped
             if self.thread_stopper.is_set():
-                break
+                return
             # take photos or rotate the bloody cube
             if step:
-                # logger.debug(step)
+                logger.debug('Execute \'' + str(step) + '\'')
                 if step == 'take photo':
                     xoff = self.config['camera']['X Offset (px)']
                     yoff = self.config['camera']['Y Offset (px)']
@@ -674,10 +753,11 @@ class RubiksSolver():
                     lab_face = camera.get_camera_color_patches(xoff, yoff, dim, pad)
                     numeric_faces.append(lab_face)
 
-                    img = camera.get_processed_image()
-                    img = Image.fromarray(img)
-                    img.save("{}.png".format(pic_counter))
-                    pic_counter += 1
+                    # enable this if you want to have the cube's pics saved
+                    # img = camera.get_processed_image()
+                    # img = Image.fromarray(img)
+                    # img.save("{}.png".format(pic_counter))
+                    # pic_counter += 1
                 else:
                     success = self.__execute_command(step)
             # update the progress bar
@@ -694,8 +774,8 @@ class RubiksSolver():
         reoriented_faces = [
             np.rot90(numeric_faces[1], k=2),  # rotate by 180 degrees
             np.rot90(numeric_faces[0], k=1, axes=(0, 1)),  # rotate by 90 degrees anticlockwise
-            numeric_faces[5],
-            numeric_faces[3],
+            numeric_faces[5], # keep the same orientation
+            numeric_faces[3], # keep the same orientation
             np.rot90(numeric_faces[2], k=1, axes=(1, 0)),  # rotate by 90 degrees clockwise
             np.rot90(numeric_faces[4], k=2)  # rotate by 180 degrees
         ]
@@ -709,48 +789,63 @@ class RubiksSolver():
         kmeans = KMeans(n_clusters=6, n_init=50).fit(rubiks_colors)
         rubiks_labels = kmeans.labels_
 
-        logger.debug(rubiks_labels.reshape((6,3,3)))
-
         # get the cube's centers as numeric values
         center_indexes = [4, 13, 22, 31, 40, 49] # cube centers when flattened
         cube_centers = list(itemgetter(*center_indexes)(rubiks_labels))
         labels_of_each_color = dict(Counter(rubiks_labels))
 
-        logger.debug(labels_of_each_color)
-        logger.debug(cube_centers)
-        logger.debug(reoriented_faces)
+        # calculate how many different colors there are on each face
+        # required for detecting if the cube is already solved
+        face_color_labels = [list(set(rubiks_labels[i * 9: (i + 1) * 9])) for i in range(6)]
+        face_labels_count = [len(x) for x in face_color_labels]
 
-        # check if the centers each has a different label
+        # check if each center has a different label
         if len(set(cube_centers)) != 6:
             self.cubesolution = None
-            logger.warning('didn\'t find the 6 cube centers of the rubik\'s cube')
+            logger.warning('didn\'t find the 6 cube centers of the rubik\'s cube. Cube centers are {}'.format(cube_centers))
+            # logger.debug(rubiks_labels.reshape((6,3,3)))
+
         # check if there's an equal number of labels for each color of all six of them
         elif len(set(labels_of_each_color.values())) != 1:
             self.cubesolution = None
-            logger.warning('found a different number of labels for some centers off the cube')
+            logger.warning('found a different number of labels for some centers off the cube. The number of labels that were detected are {}'.format(labels_of_each_color))
+            # logger.debug(rubiks_labels.reshape((6,3,3)))
+
+        # check if the cube is already solved
+        elif len(set(face_labels_count)) == 1:
+            self.cubesolution = []
+            logger.warning('the cube is already solved')
+
+        # if all tests from the above are a go then go and solve the cube
         else:
-            # if both tests from the above are a go then go and solve the cube
             self.cubesolution = self.__generate_handwritten_solution_from_cube_state(cube_centers, rubiks_labels)
             logger.debug(self.cubesolution)
 
+        # mark the end of the thread
         self.thread_stopper.set()
 
+        # if the cube is already solved, then
+        # bring the FSM into its rest state
+        if self.cubesolution == []:
+            self.stop(hard=False)
+
     def solvecube(self, event):
-        '''
-        Spins the thread for solvecube_thread method
-        event parameter is necessary for getting the arm configs
-        '''
+        """
+        Spins up the thread for solvecube_thread method.
+        :param event: Not necessary.
+        :return: Nothing.
+        """
         logger.debug('start thread for solving the cube')
-        self.config = event.kwargs.get('config')
         self.thread_stopper.clear()
         self.thread = td.Thread(target=self.solvecube_thread)
         self.thread.start()
 
     def solvecube_thread(self):
-        '''
-        Solves the cube state as it is.
-        Use self.config and self.cubesolution
-        '''
+        """
+        Solve's the Rubik's cube. Uses the cubesolution attribute
+        to get its steps.
+        :return: Nothing.
+        """
         logger.debug('solving cube')
         self.pub.publish(self.channel, {
             'solve_button_locked': False,
@@ -773,14 +868,13 @@ class RubiksSolver():
         # get the generated sequence
         sequence = generator.arms_solution
 
-        logger.debug('solutie cub')
-        for step in sequence:
-            logger.debug(step)
-
         # solve the rubik's cube by actuating the arms
         length = len(sequence)
         for idx, step in enumerate(sequence):
+            if self.thread_stopper.is_set():
+                return
             if step:
+                logger.debug('Execute \'' + str(step) + '\'')
                 success = self.__execute_command(step)
             self.pub.publish(self.channel, {
                 'solve_button_locked': False,
@@ -792,6 +886,12 @@ class RubiksSolver():
         self.thread_stopper.set()
 
     def process_command(self, event):
+        """
+        Process the commands for reflexive transitions into the rest state.
+        :param event: Must have 'config' and 'type' keys. Can have 'action',
+        'servo' and 'pos' keys.
+        :return: Nothing.
+        """
         config = event.kwargs.get('config')
         cmd_type = event.kwargs.get('type')
         if cmd_type == 'system':
@@ -885,7 +985,7 @@ if __name__ == '__main__':
                         if 'read cube' == msg:
                             rubiks.read(config=config) # change state here
                         elif 'solve cube' == msg:
-                            rubiks.solve(config=config) # change state here
+                            rubiks.solve() # change state here
                         elif 'stop' == msg:
                             rubiks.stop(hard=False) # change state here
                         elif 'cut power' == msg:
@@ -908,6 +1008,7 @@ if __name__ == '__main__':
                 # transition to rest from the solving state if the cube got solved
                 if rubiks.state == 'solving' and rubiks.is_finished(None):
                     rubiks.success()
+                    logger.info('the rubik\'s cube got solved')
 
             sleep(0.001)
     

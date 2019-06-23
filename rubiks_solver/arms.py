@@ -215,6 +215,14 @@ class Arm:
             return None
 
     def reposition_linear(self, delay=0.0):
+        """
+        Forces to record the repositioning of the linear servo even though it
+        may be in that position already.
+        :param delay: Time in seconds to wait for this command to execute.
+        :return: A dictionary with the 'servo', 'linear', 'rotational', 'position', 'time' keys that
+            specify which servo to rotate, whether it's a rotational servo of the arm or not, what's the
+            new position of the servo and the amount of time needed to execute the command.
+        """
         step = {
             'servo': self.linear_servo,
             'linear': True,
@@ -225,6 +233,14 @@ class Arm:
         return step
 
     def reposition_rotational(self, delay=0.0):
+        """
+        Forces to record the repositioning of the rotational servo even though it
+        may be in that position already.
+        :param delay: Time in seconds to wait for this command to execute.
+        :return: A dictionary with the 'servo', 'linear', 'rotational', 'position', 'time' keys that
+            specify which servo to rotate, whether it's a rotational servo of the arm or not, what's the
+            new position of the servo and the amount of time needed to execute the command.
+        """
         step = {
             'servo': self.rotational_servo,
             'linear': False,
@@ -497,20 +513,3 @@ class ArmSolutionGenerator:
 
     def append_command(self, command):
         self.arms_solution.append(command)
-
-
-if __name__ == "__main__":
-    arms = [
-        Arm(1, 2, 20, 110, 10, 100, 20, 10, 0.004, 0.05),
-        Arm(3, 4, 21, 117, 14, 120, 21, 14, 0.004, 0.05),
-        Arm(5, 6, 22, 114, 15, 130, 22, 15, 0.004, 0.05),
-        Arm(7, 8, 23, 111, 16, 124, 23, 16, 0.004, 0.05)
-    ]
-
-    generator = ArmSolutionGenerator(*arms)
-
-    generator.solution(['F', 'U', 'B\'', 'U2'])
-
-    for step in generator.arms_solution:
-        if step:
-            print(step)
