@@ -42,7 +42,7 @@ Then, after having installed the dependencies, go on and install the actual libr
 ```bash
 virtualenv -p python3 .venv # this has been tested against 3.5
 source .venv/bin/activate
-pip install -r requirements.txt --index-url https://piwheels.org
+pip install -r requirements.txt --index-url https://piwheels.org/simple --extra-index-url https://pypi.org/simple
 ```
 
 ### Usage
