@@ -1,5 +1,10 @@
 # Rubik's Cube Solver Robot
 The software that solves the Rubik's Cube on a physical machine.
+The detailed post on how this robot works can be found [here]().
+
+An example of the robot scanning and then solving the Rubik's cube is shown in the next video.
+
+[![](https://img.youtube.com/vi/GnsUHpGSF7Y/0.jpg)](https://www.youtube.com/watch?v=GnsUHpGSF7Y)
 
 ## Hardware
 
@@ -47,3 +52,10 @@ pip install -r requirements.txt --index-url https://piwheels.org/simple --extra-
 ```
 
 ### Usage
+
+To run this, execute
+```bash
+python main.py
+```
+
+This launches a GUI app, so be sure you've got an X11 client running on your computer if you're running this headless.
